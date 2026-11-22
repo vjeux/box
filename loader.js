@@ -32,8 +32,17 @@ async function fetchBlob(name) {
 async function open(key, blob) {
   return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: blob.subarray(0, 12) }, key, blob.subarray(12)));
 }
+// null: wrong key. Throws when the index cannot be fetched (network, server mid-publish).
 async function readIndex(key, meta) {
-  try { return JSON.parse(new TextDecoder().decode(await open(key, await fetchBlob(meta.i)))); } catch (e) { return null; }
+  const blob = await fetchBlob(meta.i);
+  try { return JSON.parse(new TextDecoder().decode(await open(key, blob))); } catch (e) { return null; }
+}
+function retryLater(msg) {
+  say(msg);
+  const b = document.createElement('button');
+  b.textContent = 'Retry';
+  b.onclick = () => location.reload();
+  $('ui').appendChild(b);
 }
 async function install(key, meta, index) {
   const name = 'app-' + meta.v;
@@ -64,7 +73,7 @@ async function main() {
   if (navigator.storage && navigator.storage.persist) { navigator.storage.persist().catch(() => {}); }
   console.log('box: persist done');
   let meta = null;
-  try { const r = await fetch('v.json', { cache: 'no-store' }); if (r.ok) meta = await r.json(); } catch (e) {}
+  try { const r = await fetch('v.json?n=' + Date.now(), { cache: 'no-store' }); if (r.ok) meta = await r.json(); } catch (e) {}
   console.log('box: meta ' + (meta ? meta.v : 'none'));
   const have = localStorage.getItem('box:v');
   const haveCache = have ? await caches.has('app-' + have) : false;
@@ -88,7 +97,8 @@ async function main() {
         ev.preventDefault();
         say('Checking...');
         const k = await derive($('p').value.trim(), meta);
-        const ix = await readIndex(k, meta);
+        let ix = null;
+        try { ix = await readIndex(k, meta); } catch (e) { say('Could not download (' + e.message + '). Try again.'); return; }
         if (!ix) { say('Wrong passphrase'); return; }
         key = k; index = ix; $('f').style.display = 'none'; res();
       };
@@ -96,8 +106,18 @@ async function main() {
     await kput(key);
   }
   say('Installing...');
-  try { await install(key, meta, index); } catch (e) { say('Install failed: ' + e.message); return; }
+  try { await install(key, meta, index); } catch (e) {
+    if (haveCache) { location.replace('app/index.html'); return; }
+    retryLater('Install failed (' + e.message + ').');
+    return;
+  }
   location.replace('app/index.html');
 }
-main();
+main().catch(e => {
+  const have = localStorage.getItem('box:v');
+  (have ? caches.has('app-' + have) : Promise.resolve(false)).then(ok => {
+    if (ok) location.replace('app/index.html');
+    else retryLater('Could not download (' + e.message + ').');
+  });
+});
 })();
