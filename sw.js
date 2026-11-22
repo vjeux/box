@@ -1,5 +1,5 @@
 'use strict';
-const SHELL = 'shell-1';
+const SHELL = 'shell-2';
 const SHELL_FILES = ['./', 'index.html', 'loader.js', 'manifest.webmanifest', 'icon.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(SHELL).then(c => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
@@ -15,6 +15,13 @@ self.addEventListener('fetch', e => {
       const keys = (await caches.keys()).filter(k => k.startsWith('app-'));
       for (const k of keys) {
         const r = await (await caches.open(k)).match(scope.pathname + rel);
+        if (r && e.request.mode === 'navigate') {
+          // no-store keeps the game page out of the back/forward cache: a frozen copy there
+          // holds the save database open and blocks the next page's loads.
+          const h = new Headers(r.headers);
+          h.set('Cache-Control', 'no-store');
+          return new Response(await r.blob(), { status: 200, headers: h });
+        }
         if (r) return r;
       }
       return Response.redirect(scope.pathname, 302);
