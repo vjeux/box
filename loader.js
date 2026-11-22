@@ -48,20 +48,35 @@ async function install(key, meta, index) {
   const name = 'app-' + meta.v;
   await caches.delete(name);
   const cache = await caches.open(name);
-  let done = 0, bytes = 0;
-  const total = index.reduce((a, f) => a + f.n, 0);
+  // Files whose blob is unchanged since the installed version are copied from its cache:
+  // an update downloads only what changed.
+  const haveV = localStorage.getItem('box:v');
+  let prev = {};
+  try { prev = JSON.parse(localStorage.getItem('box:index') || '{}'); } catch (e) {}
+  const old = haveV && haveV !== meta.v && await caches.has('app-' + haveV) ? await caches.open('app-' + haveV) : null;
+  const fetchTotal = index.reduce((a, f) => a + (old && prev[f.p] === f.b ? 0 : f.n), 0);
+  const verb = old ? 'Updating ' : 'Installing ';
+  let bytes = 0;
   let next = 0;
   async function worker() {
     while (next < index.length) {
       const f = index[next++];
+      const req = new Request('app/' + f.p);
+      if (old && prev[f.p] === f.b) {
+        const r = await old.match(req);
+        if (r) { await cache.put(req, r); continue; }
+      }
       const plain = await open(key, await fetchBlob(f.b));
-      await cache.put(new Request('app/' + f.p), new Response(plain, { headers: { 'Content-Type': f.t } }));
-      done++; bytes += f.n;
-      say('Installing ' + Math.floor(100 * bytes / Math.max(1, total)) + '%');
+      await cache.put(req, new Response(plain, { headers: { 'Content-Type': f.t } }));
+      bytes += f.n;
+      say(verb + Math.floor(100 * bytes / Math.max(1, fetchTotal)) + '%');
     }
   }
   await Promise.all([worker(), worker(), worker(), worker()]);
   for (const k of await caches.keys()) if (k.startsWith('app-') && k !== name) await caches.delete(k);
+  const map = {};
+  for (const f of index) map[f.p] = f.b;
+  localStorage.setItem('box:index', JSON.stringify(map));
   localStorage.setItem('box:v', meta.v);
 }
 async function main() {
