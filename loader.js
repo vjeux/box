@@ -33,8 +33,10 @@ async function open(key, blob) {
   return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: blob.subarray(0, 12) }, key, blob.subarray(12)));
 }
 // null: wrong key. Throws when the index cannot be fetched (network, server mid-publish).
+// An open site (meta.o) has no key: its blobs are the plain files.
 async function readIndex(key, meta) {
   const blob = await fetchBlob(meta.i);
+  if (meta.o) return JSON.parse(new TextDecoder().decode(blob));
   try { return JSON.parse(new TextDecoder().decode(await open(key, blob))); } catch (e) { return null; }
 }
 function retryLater(msg) {
@@ -45,7 +47,7 @@ function retryLater(msg) {
   $('ui').appendChild(b);
 }
 async function install(key, meta, index) {
-  const name = 'app-' + meta.v;
+  const name = 'box-app-' + meta.v;
   await caches.delete(name);
   const cache = await caches.open(name);
   // Files whose blob is unchanged since the installed version are copied from its cache:
@@ -53,7 +55,7 @@ async function install(key, meta, index) {
   const haveV = localStorage.getItem('box:v');
   let prev = {};
   try { prev = JSON.parse(localStorage.getItem('box:index') || '{}'); } catch (e) {}
-  const old = haveV && haveV !== meta.v && await caches.has('app-' + haveV) ? await caches.open('app-' + haveV) : null;
+  const old = haveV && haveV !== meta.v && await caches.has('box-app-' + haveV) ? await caches.open('box-app-' + haveV) : null;
   const fetchTotal = index.reduce((a, f) => a + (old && prev[f.p] === f.b ? 0 : f.n), 0);
   const verb = old ? 'Updating ' : 'Installing ';
   let bytes = 0;
@@ -66,14 +68,15 @@ async function install(key, meta, index) {
         const r = await old.match(req);
         if (r) { await cache.put(req, r); continue; }
       }
-      const plain = await open(key, await fetchBlob(f.b));
+      const blob = await fetchBlob(f.b);
+      const plain = meta.o ? blob : await open(key, blob);
       await cache.put(req, new Response(plain, { headers: { 'Content-Type': f.t } }));
       bytes += f.n;
       say(verb + Math.floor(100 * bytes / Math.max(1, fetchTotal)) + '%');
     }
   }
   await Promise.all([worker(), worker(), worker(), worker()]);
-  for (const k of await caches.keys()) if (k.startsWith('app-') && k !== name) await caches.delete(k);
+  for (const k of await caches.keys()) if (k.startsWith('box-app-') && k !== name) await caches.delete(k);
   const map = {};
   for (const f of index) map[f.p] = f.b;
   localStorage.setItem('box:index', JSON.stringify(map));
@@ -91,13 +94,13 @@ async function main() {
   try { const r = await fetch('v.json?n=' + Date.now(), { cache: 'no-store' }); if (r.ok) meta = await r.json(); } catch (e) {}
   console.log('box: meta ' + (meta ? meta.v : 'none'));
   const have = localStorage.getItem('box:v');
-  const haveCache = have ? await caches.has('app-' + have) : false;
+  const haveCache = have ? await caches.has('box-app-' + have) : false;
   if (haveCache && (!meta || meta.v === have)) { location.replace('app/index.html'); return; }
   if (!meta) { say(haveCache ? '' : 'Offline. Open once while online to install.'); return; }
   console.log('box: have ' + have + ' ' + haveCache);
-  let key = await kget();
+  let key = meta.o ? null : await kget();
   console.log('box: key ' + !!key);
-  let index = key ? await readIndex(key, meta) : null;
+  let index = (key || meta.o) ? await readIndex(key, meta) : null;
   if (!index && window.__boxTestPass) {
     key = await derive(window.__boxTestPass, meta);
     index = await readIndex(key, meta);
@@ -130,7 +133,7 @@ async function main() {
 }
 main().catch(e => {
   const have = localStorage.getItem('box:v');
-  (have ? caches.has('app-' + have) : Promise.resolve(false)).then(ok => {
+  (have ? caches.has('box-app-' + have) : Promise.resolve(false)).then(ok => {
     if (ok) location.replace('app/index.html');
     else retryLater('Could not download (' + e.message + ').');
   });

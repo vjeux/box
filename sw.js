@@ -1,5 +1,5 @@
 'use strict';
-const SHELL = 'shell-2';
+const SHELL = 'box-shell-1';
 const SHELL_FILES = ['./', 'index.html', 'loader.js', 'manifest.webmanifest', 'icon.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(SHELL).then(c => c.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
@@ -12,7 +12,7 @@ self.addEventListener('fetch', e => {
   const rel = url.pathname.slice(scope.pathname.length);
   if (rel.startsWith('app/')) {
     e.respondWith((async () => {
-      const keys = (await caches.keys()).filter(k => k.startsWith('app-'));
+      const keys = (await caches.keys()).filter(k => k.startsWith('box-app-'));
       for (const k of keys) {
         const r = await (await caches.open(k)).match(scope.pathname + rel);
         if (r && e.request.mode === 'navigate') {
